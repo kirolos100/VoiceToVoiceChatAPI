@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Live Voice Chat</title>
+</head>
+<body>
+    <h1>Live Voice Chat</h1>
+    <button id="start-btn">Start Voice Chat</button>
+    <p id="status">Status: Idle</p>
+    <p id="response"></p>
+
+    <script>
+        const startBtn = document.getElementById('start-btn');
+        const statusText = document.getElementById('status');
+        const responseText = document.getElementById('response');
+    
+        // Check if the browser supports the Web Speech API
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("Your browser does not support speech recognition. Please use Chrome or Edge.");
+        } else {
+            const recognition = new webkitSpeechRecognition();
+            recognition.lang = 'ar-EG';               // Set language to Egyptian Arabic
+            recognition.interimResults = false;
+            recognition.continuous = false;           // Listen for one utterance at a time
+    
+            let isActive = false;  // Whether voice chat is active
+            let isSpeaking = false; // Whether the bot is currently speaking
+    
+            recognition.onresult = async (event) => {
+                // If we're in the middle of speaking, ignore any captured speech
+                if (isSpeaking) {
+                    console.log("Ignoring recognition result while speaking.");
+                    return;
+                }
+                const userQuery = event.results[0][0].transcript;
+                console.log("User query:", userQuery);
+                statusText.innerText = "Processing...";
+    
+                try {
+                    // Stop recognition to avoid capturing the bot's answer
+                    recognition.stop();
+    
+                    // Send the query to the Flask backend
+                    const response = await fetch('/voice-chat', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ text: userQuery }),
+                    });
+    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+    
+                    const data = await response.json();
+                    responseText.innerText = data.response;
+    
+                    // Prepare to speak the answer
+                    const utterance = new SpeechSynthesisUtterance(data.response);
+                    utterance.lang = 'ar-EG';
+                    isSpeaking = true; // Set flag so that we ignore any recognition events during speech
+                    speechSynthesis.speak(utterance);
+    
+                    utterance.onend = () => {
+                        isSpeaking = false;
+                        // Delay restarting recognition to avoid picking up the spoken answer
+                        setTimeout(() => {
+                            if (isActive) {
+                                recognition.start();
+                                statusText.innerText = "Listening...";
+                            }
+                        }, 2000); // 2-second delay (adjust as needed)
+                    };
+    
+                } catch (error) {
+                    console.error("Error:", error);
+                    responseText.innerText = "Error: " + error.message;
+                    // Restart recognition after a short delay even on error
+                    setTimeout(() => {
+                        if (isActive) {
+                            recognition.start();
+                            statusText.innerText = "Listening...";
+                        }
+                    }, 2000);
+                }
+            };
+    
+            recognition.onerror = (event) => {
+                statusText.innerText = "Error: " + event.error;
+            };
+    
+            // In case recognition ends unexpectedly, restart if chat is active and we're not speaking
+            recognition.onend = () => {
+                if (!isSpeaking && isActive) {
+                    // Small delay to avoid immediate restart capturing residual sound
+                    setTimeout(() => {
+                        recognition.start();
+                        statusText.innerText = "Listening...";
+                    }, 500);
+                }
+            };
+    
+            // Toggle recognition start/stop when the button is clicked
+            startBtn.addEventListener('click', () => {
+                if (isActive) {
+                    isActive = false;
+                    recognition.stop();
+                    startBtn.innerText = "Start Voice Chat";
+                    statusText.innerText = "Status: Idle";
+                } else {
+                    isActive = true;
+                    recognition.start();
+                    startBtn.innerText = "Stop Voice Chat";
+                    statusText.innerText = "Listening...";
+                }
+            });
+        }
+    </script>
+    
+    
+</body>
+</html>
