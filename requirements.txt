@@ -97,7 +97,6 @@ pygame==2.6.1
 Pygments==2.18.0
 PyJWT==2.10.1
 PyPDF2==3.0.1
-pypiwin32==223
 pytest==8.3.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
