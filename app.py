@@ -15,10 +15,15 @@ import time
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from flask_cors import CORS
-
+from flask import Flask, request, jsonify, send_from_directory
+import asyncio
+from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
+CORS(app)  # Enable CORS for all routes
+
+
+
 
 
 # Azure OpenAI configuration for embeddings
@@ -346,6 +351,7 @@ def detect_critical_issue(text):
     """
     Detect if the user's input contains a critical issue that should be passed to a human.
     """
+    # Arabic Trigger Sentences
     trigger_sentences = [
         "تم اكتشاف اختراق أمني كبير.",
         "تمكن قراصنة من الوصول إلى بيانات حساسة.",
@@ -355,10 +361,18 @@ def detect_critical_issue(text):
         "تم استغلال ثغرة أمنية في الشبكة.",
         "هناك محاولة وصول غير مصرح بها إلى الملفات السرية."
     ]
+
+    # Get embeddings for trigger sentences
     trigger_embeddings = np.array([get_embedding(sent) for sent in trigger_sentences])
+
+    # Get embedding for the input text
     text_embedding = np.array(get_embedding(text)).reshape(1, -1)
+
+    # Calculate cosine similarity between the input text and trigger sentences
     similarities = cosine_similarity(text_embedding, trigger_embeddings)
     max_similarity = np.max(similarities)
+
+    # If the similarity is above a threshold, consider it a critical issue
     if max_similarity > 0.9:
         print("This issue should be passed to a human.")
         return True
@@ -384,18 +398,33 @@ async def voice_chat_loop():
         print(f"🤖 Bot: {response}")
         speak_response(response)
 
-# FLASK ENDPOINT
+
+
 @app.route('/voice-chat', methods=['POST'])
 def voice_chat():
-    """
-    Endpoint for an infinite voice-to-voice chat.
-    The conversation will continue until the user says "إنهاء" or "خروج".
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(voice_chat_loop())
-    loop.close()
-    return jsonify({"message": "Conversation ended."})
+    try:
+        # Accept text input from the client
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        user_query = data.get("text")
+        if not user_query:
+            return jsonify({"error": "No text input provided"}), 400
+
+        # Process the query and generate a response
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        response = loop.run_until_complete(get_response(user_query))
+        loop.close()
+
+        return jsonify({"response": response})
+    except Exception as e:
+        print(f"Error in /voice-chat: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+@app.route("/")
+def index():
+    return send_from_directory("static", "index.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
