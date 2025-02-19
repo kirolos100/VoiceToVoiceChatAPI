@@ -15,16 +15,15 @@ import time
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from flask_cors import CORS
-from botbuilder.core import BotFrameworkAdapter, BotFrameworkAdapterSettings, TurnContext, MessageFactory
-from botbuilder.schema import Activity, ActivityTypes
+from flask import Flask, request, jsonify, send_from_directory
 import asyncio
-
-SETTINGS = BotFrameworkAdapterSettings("87297d8a-7065-4007-9dc4-4987d25fb7cb", "62fe8046-db03-44f6-98a2-675725695e41")
-ADAPTER = BotFrameworkAdapter(SETTINGS)
-
+from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # Allow cross-origin requests
+CORS(app)  # Enable CORS for all routes
+
+
+
 
 
 # Azure OpenAI configuration for embeddings
@@ -136,6 +135,19 @@ try:
 except Exception as e:
     print(f"❌ Failed to upload documents: {e}")
 
+# Debug: Run a simple query to verify that documents are in the index.
+try:
+    simple_results = search_client.search(
+        search_text="*",
+        select=["question", "answer"],
+        top=3
+    )
+    print("Simple query results:")
+    for doc in simple_results:
+        print(doc)
+except Exception as e:
+    print(f"❌ Simple query error: {e}")
+
 # INITIALIZE REDIS CLIENT
 try:
     redis_client = redis.Redis(
@@ -162,12 +174,6 @@ def check_redis_cache(query):
     except Exception as e:
         print(f"❌ Redis error: {e}")
     return None
-def clean_text(text):
-    """
-    Remove common punctuation and whitespace from the beginning and end of the text,
-    then convert to lower case.
-    """
-    return text.strip(" .،!؛؟").lower()
 
 def get_best_match(query):
     """
@@ -242,6 +248,7 @@ def get_best_match(query):
 async def get_realtime_response(user_query):
     """
     Fallback function: Uses GPT‑4o realtime to generate an answer if both searches fail.
+    Now with added instructions so that the model responds as an Egyptian man.
     """
     try:
         async with RTLowLevelClient(
@@ -249,7 +256,8 @@ async def get_realtime_response(user_query):
             azure_deployment=RT_DEPLOYMENT,
             key_credential=AzureKeyCredential(RT_API_KEY)
         ) as client_rt:
-            instructions = "أنت رجل عربي. انا لا اريد ايضا اي bold points في الاجابة " + user_query
+            # Prepend instruction for Egyptian persona
+            instructions = "أنت رجل عربي. انا لا اريد ايضا اي bold points  في الاجابة  و لا اريد عنواين مرقمة" + user_query
             await client_rt.send(
                 ResponseCreateMessage(
                     response=ResponseCreateParams(
@@ -329,6 +337,16 @@ def speak_response(text):
         print("Speech synthesis canceled:")
         print("  Reason: {}".format(cancellation.reason))
         print("  Error Details: {}".format(cancellation.error_details))
+
+# HELPER: CLEAN TEXT FOR EXIT CHECK
+def clean_text(text):
+    """
+    Remove common punctuation and whitespace from the beginning and end of the text,
+    then convert to lower case.
+    """
+    return text.strip(" .،!؛؟").lower()
+
+# CRITICAL ISSUE DETECTION
 def detect_critical_issue(text):
     """
     Detect if the user's input contains a critical issue that should be passed to a human.
@@ -380,43 +398,39 @@ async def voice_chat_loop():
         print(f"🤖 Bot: {response}")
         speak_response(response)
 
-# FLASK ENDPOINT
+
+
 @app.route('/voice-chat', methods=['POST'])
 def voice_chat():
-    """
-    Endpoint for an infinite voice-to-voice chat.
-    The conversation will continue until the user says "إنهاء" or "خروج".
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(voice_chat_loop())
-    loop.close()
-    return jsonify({"message": "Conversation ended."})
+    try:
+        # Accept text input from the client
+        data = request.json
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
 
-# BOT FRAMEWORK HANDLER
-@app.route("/api/messages", methods=["POST"])
-async def messages():
-    """
-    Main endpoint for handling bot messages.
-    """
-    if "application/json" in request.headers["Content-Type"]:
-        body = await request.json
-    else:
-        return jsonify({"error": "Unsupported Media Type"}), 415
+        user_query = data.get("text")
+        if not user_query:
+            return jsonify({"error": "No text input provided"}), 400
+        if clean_text(user_query) in ["إنهاء", "خروج"]:
+            print("👋 Goodbye!")
+            return jsonify({"response": "مع السلامة"})
+        if detect_critical_issue(user_query):
+            response = "هذه المشكلة تحتاج إلى تدخل بشري. سأقوم بالاتصال بخدمة العملاء لدعمك."
+            return jsonify({"response": response})
 
-    activity = Activity().deserialize(body)
-    auth_header = request.headers["Authorization"] if "Authorization" in request.headers else ""
+        # Process the query and generate a response
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        response = loop.run_until_complete(get_response(user_query))
+        loop.close()
 
-    async def handle_turn(turn_context: TurnContext):
-        if turn_context.activity.type == ActivityTypes.message:
-            user_query = turn_context.activity.text
-            response = await get_response(user_query)
-            await turn_context.send_activity(MessageFactory.text(response))
-        else:
-            await turn_context.send_activity(f"Unsupported activity type: {turn_context.activity.type}")
-
-    await ADAPTER.process_activity(activity, auth_header, handle_turn)
-    return jsonify({}), 200
+        return jsonify({"response": response})
+    except Exception as e:
+        print(f"Error in /voice-chat: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+@app.route("/")
+def index():
+    return send_from_directory("static", "index.html")
 
 if __name__ == "__main__":
     app.run(debug=True)
