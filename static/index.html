@@ -13,6 +13,7 @@
 <body>
   <h1>Live Carrier Chat</h1>
   <button id="start-btn">Start Voice Chat</button>
+  <button id="stop-speaking-btn" disabled>Stop Speaking</button>
   <p id="status">Status: Idle</p>
   <p id="response"></p>
 
@@ -34,6 +35,7 @@
     let currentEventSource = null;
 
     const startBtn = document.getElementById('start-btn');
+    const stopSpeakingBtn = document.getElementById('stop-speaking-btn');
     const statusText = document.getElementById('status');
     const responseText = document.getElementById('response');
 
@@ -70,15 +72,14 @@
             const audioConfig = SpeechSDK.AudioConfig.fromSpeakerOutput(currentPlayer);
             currentSynthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
 
-            // Delay to prevent audio feedback
-            //await new Promise(resolve => setTimeout(resolve, 300));
-
             logStatus("Speaking");
             isSpeaking = true;
+            stopSpeakingBtn.disabled = false;
 
             currentSynthesizer.speakTextAsync(data.response, 
               result => {
                 isSpeaking = false;
+                stopSpeakingBtn.disabled = true;
                 if (result.reason === SpeechSDK.ResultReason.SynthesizingAudioCompleted) {
                   startRecognitionWithDelay();
                 }
@@ -87,6 +88,7 @@
               error => {
                 console.error("Synthesis error:", error);
                 isSpeaking = false;
+                stopSpeakingBtn.disabled = true;
                 cleanupSynthesis();
                 startRecognitionWithDelay();
               }
@@ -99,16 +101,10 @@
     }
 
     async function stopSynthesis() {
-      //stop(currentPlayer);
-      //currentPlayer.stop();
-      //currentPlayer.pause();
-      //currentSynthesizer.close();
       if (isSpeaking) {
         // Stop audio playback immediately
-        currentPlayer.pause();
-        currentSynthesizer.close();
         if (currentPlayer) {
-          currentPlayer.pause();  // Immediate audio stop
+          currentPlayer.pause();
           currentPlayer = null;
         }
         // Close synthesizer
@@ -117,6 +113,7 @@
           currentSynthesizer = null;
         }
         isSpeaking = false;
+        stopSpeakingBtn.disabled = true;
         logStatus("Speech interrupted");
       }
     }
@@ -151,7 +148,6 @@
         const text = e.result.text.trim();
         if (!text) return;
 
-        // Immediately stop any ongoing speech
         if (isSpeaking) {
           await stopSynthesis();
         }
@@ -171,6 +167,7 @@
       await stopSynthesis();
       await stopRecognition();
       startBtn.textContent = "Start Voice Chat";
+      stopSpeakingBtn.disabled = true;
       const goodbyeSynth = new SpeechSDK.SpeechSynthesizer(speechConfig);
       goodbyeSynth.speakTextAsync("مع السلامة");
     }
@@ -178,10 +175,18 @@
     startBtn.addEventListener('click', async () => {
       if (startBtn.textContent === "Start Voice Chat") {
         startBtn.textContent = "Stop Voice Chat";
+        stopSpeakingBtn.disabled = false;
         await startRecognition();
       } else {
         await stopSystem();
       }
+    });
+
+    stopSpeakingBtn.addEventListener('click', async () => {
+      await stopSynthesis();
+      responseText.textContent = "";
+      logStatus("Ready to listen");
+      startRecognitionWithDelay();
     });
 
     // Initialize audio context
