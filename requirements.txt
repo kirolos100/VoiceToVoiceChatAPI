@@ -150,3 +150,6 @@ python-socketio==5.12.1
 requests-oauthlib==2.0.0
 simple-websocket==1.1.0
 wsproto==1.2.0
+azure-storage-blob==12.23.1
+gunicorn
+rich
