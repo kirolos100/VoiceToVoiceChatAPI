@@ -1,14 +1,205 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Carrier Live Chat</title>
-    <script type="module" crossorigin src="/assets/index-9-g3Ehj3.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-MbNbqoGC.css">
-  </head>
-  <body>
-    <div id="root"></div>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <title>Live Carrier Chat</title>
+  <script src="https://aka.ms/csspeech/jsbrowserpackageraw"></script>
+  <style>
+    body { font-family: sans-serif; }
+    button { margin: 5px; padding: 10px; }
+    #status, #response { margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Live Carrier Chat</h1>
+  <button id="start-btn">Start Voice Chat</button>
+  <button id="stop-speaking-btn" disabled>Stop Speaking</button>
+  <p id="status">Status: Idle</p>
+  <p id="response"></p>
+
+  <script>
+    const SPEECH_KEY = "3c358ec45fdc4e6daeecb7a30002a9df";
+    const SPEECH_REGION = "westus2";
+    const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(SPEECH_KEY, SPEECH_REGION);
+    speechConfig.speechRecognitionLanguage = "ar-EG";
+    speechConfig.speechSynthesisVoiceName = "ar-EG-ShakirNeural";
+
+    const audioInput = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+    let recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioInput);
+    
+    // Speech synthesis variables
+    let currentPlayer = null;
+    let currentSynthesizer = null;
+    let isProcessing = false;
+    let isSpeaking = false;
+    let currentEventSource = null;
+
+    const startBtn = document.getElementById('start-btn');
+    const stopSpeakingBtn = document.getElementById('stop-speaking-btn');
+    const statusText = document.getElementById('status');
+    const responseText = document.getElementById('response');
+
+    function logStatus(msg) {
+      statusText.textContent = `Status: ${msg}`;
+      console.log(`Status: ${msg}`);
+    }
+
+    async function processUserQuery(query) {
+      if (isProcessing) return;
+      isProcessing = true;
+      
+      // Cleanup previous operations
+      currentEventSource?.close();
+      await stopSynthesis();
+      await stopRecognition();
+
+      logStatus("Processing");
+      responseText.textContent = "";
+
+      try {
+        currentEventSource = new EventSource(`/stream?query=${encodeURIComponent(query)}`);
+        
+        currentEventSource.onmessage = async (event) => {
+          const data = JSON.parse(event.data);
+          if (data.error) throw new Error(data.error);
+
+          if (data.response) {
+            currentEventSource.close();
+            responseText.textContent = data.response;
+
+            // Create new audio destination for each response
+            //currentPlayer = new SpeechSDK.SpeakerAudioDestination();
+            //const audioConfig = SpeechSDK.AudioConfig.fromSpeakerOutput(currentPlayer);
+            //currentSynthesizer = new SpeechSDK.SpeechSynthesizer(speechConfig, audioConfig);
+            const responsesyth = new SpeechSDK.SpeechSynthesizer(speechConfig);
+            
+
+            logStatus("Speaking");
+            isSpeaking = true;
+            stopSpeakingBtn.disabled = false;
+
+            responsesyth.speakTextAsync(
+            data.response,
+            function(result) {
+              // Synthesis completed successfully.
+              isSpeaking = false;
+              stopSpeakingBtn.disabled = true;
+              cleanupSynthesis();
+              // After the speech is finished, begin new recognition.
+              startRecognitionWithDelay();
+            },
+            function(error) {
+              // Handle synthesis error.
+              console.error("Speech synthesis error:", error);
+              isSpeaking = false;
+              stopSpeakingBtn.disabled = true;
+              cleanupSynthesis();
+              // Optionally start recognition even if an error occurred.
+              startRecognitionWithDelay();
+            }
+          );
+           
+          }
+        };
+      } catch (e) {
+        handleError(e.message);
+      }
+    }
+
+    async function stopSynthesis() {
+      if (isSpeaking) {
+        // Stop audio playback immediately
+        if (currentPlayer) {
+          currentPlayer.pause();
+          currentPlayer = null;
+        }
+        // Close synthesizer
+        if (currentSynthesizer) {
+          currentSynthesizer.close();
+          currentSynthesizer = null;
+        }
+        isSpeaking = false;
+        stopSpeakingBtn.disabled = true;
+        logStatus("Speech interrupted");
+      }
+    }
+
+    function cleanupSynthesis() {
+      if (currentSynthesizer) {
+        currentSynthesizer.close();
+        currentSynthesizer = null;
+      }
+      currentPlayer = null;
+    }
+
+    async function stopRecognition() {
+      await recognizer.stopContinuousRecognitionAsync();
+    }
+
+    function startRecognitionWithDelay() {
+      setTimeout(() => {
+        isProcessing = false;
+        startRecognition();
+      }, 1000);
+    }
+
+    async function startRecognition() {
+      logStatus("Listening...");
+      await recognizer.startContinuousRecognitionAsync();
+    }
+
+    // Recognition handler
+    recognizer.recognized = async (s, e) => {
+      if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
+        const text = e.result.text.trim();
+        if (!text) return;
+
+        if (isSpeaking) {
+          await stopSynthesis();
+        }
+
+        if (text.toLowerCase() === "خروج") {
+          await stopSystem();
+          return;
+        }
+
+        if (!isProcessing) {
+          await processUserQuery(text);
+        }
+      }
+    };
+
+    async function stopSystem() {
+      await stopSynthesis();
+      await stopRecognition();
+      startBtn.textContent = "Start Voice Chat";
+      stopSpeakingBtn.disabled = true;
+      const goodbyeSynth = new SpeechSDK.SpeechSynthesizer(speechConfig);
+      goodbyeSynth.speakTextAsync("مع السلامة");
+    }
+
+    startBtn.addEventListener('click', async () => {
+      if (startBtn.textContent === "Start Voice Chat") {
+        startBtn.textContent = "Stop Voice Chat";
+        stopSpeakingBtn.disabled = false;
+        await startRecognition();
+      } else {
+        await stopSystem();
+      }
+    });
+
+    stopSpeakingBtn.addEventListener('click', async () => {
+      await stopSynthesis();
+      responseText.textContent = "";
+      logStatus("Ready to listen");
+      startRecognitionWithDelay();
+    });
+
+    // Initialize audio context
+    (function initAudio() {
+      const context = new (window.AudioContext || window.webkitAudioContext)();
+      context.resume().then(() => console.log("Audio ready"));
+    })();
+  </script>
+</body>
 </html>
